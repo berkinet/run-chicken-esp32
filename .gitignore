@@ -1,0 +1,11 @@
+build/
+.tools/
+__pycache__/
+*.pyc
+.DS_Store
+firmware/feeder_gateway/admin_credentials.h
+firmware/feeder_gateway/remote_states_credentials.h
+indigo/remote_states_config.json
+indigo/remote_states_ids.json
+*.bin
+*.elf

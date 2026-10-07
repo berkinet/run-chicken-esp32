@@ -1,0 +1,15 @@
+name: Feeder checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          c++ -std=c++11 firmware/tests/protocol_test.cpp -o /tmp/protocol-test
+          /tmp/protocol-test
+          c++ -std=c++11 firmware/tests/latest_command_test.cpp -o /tmp/queue-test
+          /tmp/queue-test
+          python3 -m unittest discover -s indigo/tests -v

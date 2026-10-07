@@ -1,0 +1,55 @@
+{
+  "folder": "remoteStatesFolder",
+  "bind": "0.0.0.0",
+  "port": 8786,
+  "sources": {
+    "go-feeder-gateway": {
+      "prefix": "ChickenFeeder",
+      "token": "REPLACE-WITH-A-RANDOM-SOURCE-TOKEN",
+      "offline_after": 90,
+      "timeout_variable": "Set_HeartbeatTimeout",
+      "fields": {
+        "physical_state": {
+          "name": "DoorState",
+          "type": "string"
+        },
+        "requested_state": {
+          "name": "RequestedDoorState",
+          "type": "string"
+        },
+        "ble_connected": {
+          "name": "BLEConnected",
+          "type": "bool"
+        },
+        "ble_busy": {
+          "name": "BLEBusy",
+          "type": "bool"
+        },
+        "ble_error": {
+          "name": "BLEError",
+          "type": "string"
+        },
+        "last_result": {
+          "name": "LastResult",
+          "type": "string"
+        },
+        "chip_temperature_c": {
+          "name": "ChipTemperatureC",
+          "type": "number"
+        },
+        "uptime_ms": {
+          "name": "UptimeMs",
+          "type": "number"
+        },
+        "chip_temperature_min_c": {
+          "name": "ChipTemperatureMinC",
+          "type": "number"
+        },
+        "chip_temperature_max_c": {
+          "name": "ChipTemperatureMaxC",
+          "type": "number"
+        }
+      }
+    }
+  }
+}
