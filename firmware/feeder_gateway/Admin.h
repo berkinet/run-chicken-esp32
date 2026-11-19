@@ -4,8 +4,10 @@
 #include <esp_random.h>
 #include <esp_ota_ops.h>
 #include "admin_credentials.h"
+#include "AdminPassword.h"
+#include <mbedtls/pkcs5.h>
 
-const char kFirmwareVersion[] = "1.0.0-feeder";
+const char kFirmwareVersion[] = "1.0.1-feeder";
 uint32_t rebootAt = 0;
 String recentLogs[32];
 unsigned logNext = 0, logCount = 0;
@@ -21,6 +23,18 @@ void logEvent(const String &message) {
 
 // Persistent, independently revocable browser sessions. No idle timeout.
 Preferences sessionStore;
+bool deriveAdminPassword(const char *password, const uint8_t *salt, uint8_t *result) {
+  return mbedtls_pkcs5_pbkdf2_hmac_ext(MBEDTLS_MD_SHA256,
+      reinterpret_cast<const unsigned char *>(password), strlen(password), salt, 16,
+      100000, 32, result) == 0;
+}
+void randomAdminSalt(uint8_t *out, size_t length) { esp_fill_random(out, length); }
+AdminPassword adminPassword(kAdminPassword, deriveAdminPassword, randomAdminSalt);
+String adminSessionRecord(const String &token) {
+  char tag[33]; adminPassword.sessionTag(tag);
+  return String(tag) + "." + token;
+}
+
 String adminSessions[4];
 bool sessionStoreReady = false;
 unsigned nextSession = 0;
@@ -46,9 +60,10 @@ String sessionCookie() {
 }
 
 int sessionIndex() {
+  if (!adminPassword.sessionEpochValid()) return -1;
   String token = sessionCookie();
   if (token.length() != 64) return -1;
-  for (int i = 0; i < 4; ++i) if (adminSessions[i] == token) return i;
+  for (int i = 0; i < 4; ++i) if (adminPassword.acceptsSession(adminSessions[i].c_str(), token.c_str())) return i;
   return -1;
 }
 
@@ -100,6 +115,13 @@ const char adminPage[] PROGMEM = R"HTML(<!doctype html><html lang="en"><meta cha
 <p>This preference survives gateway restarts.</p>
 </section>
 <div class="command-row"><button type="button" data-command="reboot">Reboot gateway</button></div>
+<section><h2>Change password</h2>
+<form id="password-form" method="POST" action="/admin/password">
+<p><label>Current password <input name="current_password" type="password" autocomplete="current-password" maxlength="128" required></label></p>
+<p><label>New password <input name="new_password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required></label></p>
+<p><label>Confirm new password <input name="confirm_password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required></label></p>
+<p>Use 12–128 characters. Changing the password signs out all browsers. Log in again with the new password.</p>
+<button>Change password and sign out</button></form></section>
 <p id="firmware-link"><a href="/update">Upload firmware</a></p></details>
 <pre id="output" aria-live="polite">Connecting…</pre>
 <script>
@@ -186,6 +208,11 @@ String uploadError;
 void adminRoutes() {
   sessionStoreReady = sessionStore.begin("feeder-admin", false);
   if (sessionStoreReady) {
+    uint8_t record[AdminPassword::kRecordSize] = {};
+    const bool exists = sessionStore.isKey("password");
+    const size_t length = exists ? sessionStore.getBytesLength("password") : 0;
+    if (length == sizeof(record)) sessionStore.getBytes("password", record, sizeof(record));
+    adminPassword.load(record, length, exists);
     for (unsigned i = 0; i < 4; ++i) adminSessions[i] = sessionStore.getString(("s" + String(i)).c_str(), "");
     nextSession = sessionStore.getUInt("next", 0) % 4;
   }
@@ -197,8 +224,7 @@ void adminRoutes() {
     server.sendHeader("Cache-Control", "no-store");
     if (!sameOrigin()) { server.send(403, "text/plain", "Invalid login origin"); return; }
     if (!sessionStoreReady) { server.send(503, "text/plain", "Session storage unavailable"); return; }
-    if (!kAdminPassword[0] || String(kAdminPassword) == "CHANGE-ME" ||
-        server.arg("username") != kAdminUser || server.arg("password") != kAdminPassword) {
+    if (server.arg("username") != kAdminUser || !adminPassword.matches(server.arg("password").c_str())) {
       server.send(401, "text/html", "Incorrect username or password. <a href='/login'>Try again</a>"); return;
     }
     uint8_t bytes[32]; esp_fill_random(bytes, sizeof(bytes));
@@ -209,13 +235,35 @@ void adminRoutes() {
       for (int i = 0; i < 4; ++i) if (!adminSessions[i].length()) { slot = i; break; }
     }
     if (slot < 0) slot = nextSession;
-    if (!sessionStore.putString(("s" + String(slot)).c_str(), encoded)) {
+    if (!sessionStore.putString(("s" + String(slot)).c_str(), adminSessionRecord(encoded))) {
       server.send(503, "text/plain", "Unable to save session"); return;
     }
-    adminSessions[slot] = encoded;
+    adminSessions[slot] = adminSessionRecord(encoded);
     nextSession = (slot + 1) % 4; sessionStore.putUInt("next", nextSession);
     server.sendHeader("Set-Cookie", "feeder_session=" + String(encoded) + "; Path=/; HttpOnly; SameSite=Strict; Max-Age=34560000");
     server.sendHeader("Location", "/"); server.send(303, "text/plain", "Logged in");
+  });
+  server.on("/admin/password", HTTP_POST, []() {
+    if (!requireAdmin()) return;
+    if (!sameOrigin()) { server.send(403, "text/plain", "Invalid password-change origin"); return; }
+    const AdminPassword::Result result = adminPassword.change(
+        server.arg("current_password").c_str(), server.arg("new_password").c_str(),
+        server.arg("confirm_password").c_str(), [](const uint8_t *record, size_t length) {
+          return sessionStore.putBytes("password", record, length) == length;
+        });
+    if (result != AdminPassword::Changed) {
+      const char *message = result == AdminPassword::WrongCurrent ? "Current password is incorrect." :
+          result == AdminPassword::InvalidNew ? "New password must be 12–128 characters long." :
+          result == AdminPassword::Mismatch ? "New passwords do not match." :
+          "Unable to save password. Your password has not changed; retry later.";
+      server.send(result == AdminPassword::WrongCurrent ? 403 : result == AdminPassword::StorageFailure ? 503 : 400,
+                  "text/plain", String(message) + " Return to the console and try again.");
+      return;
+    }
+    for (auto &session : adminSessions) session = "";
+    server.sendHeader("Set-Cookie", "feeder_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0");
+    logEvent("Administrator changed web password; all browser sessions revoked");
+    server.send(200, "text/html", "Password changed. All browsers have been signed out. <a href='/login'>Log in with your new password</a>.");
   });
   server.on("/logout", HTTP_POST, []() {
     server.sendHeader("Cache-Control", "no-store");

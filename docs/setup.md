@@ -14,7 +14,9 @@ cp firmware/feeder_gateway/admin_credentials.example.h firmware/feeder_gateway/a
 cp firmware/feeder_gateway/remote_states_credentials.example.h firmware/feeder_gateway/remote_states_credentials.h
 ```
 
-Edit `admin_credentials.h` to set a unique nonempty admin password. Edit
+Edit `admin_credentials.h` to set a unique nonempty initial admin password.
+After installation, Management → Change password saves a replacement without
+rebuilding firmware; the saved replacement takes precedence over this header. Edit
 `config.h` to set a shared `kApiKey` if API authentication is desired. An empty
 API key permits unauthenticated LAN API requests; the browser login is separate.
 Local credential headers are ignored by Git. Keep `kStateEndpoint` empty to disable
@@ -83,3 +85,28 @@ image; USB recovery remains necessary. Changes to the partition layout require U
 Browser sessions persist across restart, have no idle timeout and use
 HttpOnly/SameSite=Strict cookies; HTTP itself remains unencrypted. Log Out revokes
 the session. Four sessions are retained; a fifth replaces the oldest.
+
+## Change the web login password
+
+Open the feeder console, expand **Management**, and use **Change password**.
+Enter the current password, the new password (12–128 characters), and its
+confirmation. The username stays `admin`. The current password is required
+even when the browser is already logged in. The Indigo API key is separate.
+
+The replacement is stored as a randomly salted PBKDF2-HMAC-SHA256 verifier
+(100,000 iterations) in NVS and survives reboot and application OTA updates.
+The compiled password is used only before a replacement is saved; subsequent
+builds do not overwrite the saved password. Corrupt stored credentials fail
+closed rather than restoring the compiled password.
+
+A successful change signs out **all** browser sessions, including the current
+one. Sign back in with the new password. A wrong current password, mismatched
+confirmation, invalid length, or failed save leaves the working password and
+sessions unchanged. Passwords and verifiers are never included in diagnostics
+or application logs. This remains the existing plain-HTTP trusted-LAN interface.
+
+Prepared on 19 November 2026 for firmware 1.0.1-feeder. Password-state
+regression checks cover validation, save/derivation failure, persistence across
+reboot/build-default changes, session-epoch rotation, and corrupt records.
+Installation and live password-change acceptance remain owner-run. Local
+credential headers record only the initial password, not browser changes.
