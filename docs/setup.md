@@ -110,3 +110,13 @@ regression checks cover validation, save/derivation failure, persistence across
 reboot/build-default changes, session-epoch rotation, and corrupt records.
 Installation and live password-change acceptance remain owner-run. Local
 credential headers record only the initial password, not browser changes.
+
+Validation on 19 November 2026: feeder-only 1.0.1-feeder and the corresponding
+local Mesh 0.4.13 build both compiled successfully. C++ regressions, Indigo
+receiver tests and browser script syntax checks passed. At the owner's explicit
+request the Mesh build was installed on the gateway; live checks confirmed the
+new form, rejection of unauthenticated/cross-origin requests, wrong-current and
+mismatched-password rejection, and no door movement during the update. The
+existing password and saved startup preference were preserved. A successful
+live password rotation was deliberately left to the owner; persistence and
+session revocation are covered by host regression tests.
